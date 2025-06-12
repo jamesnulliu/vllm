@@ -132,14 +132,19 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
 
         # router_logits: (num_tokens, n_experts)
         router_logits, _ = self.gate(hidden_states)
-        final_hidden_states = self.experts(hidden_states=hidden_states,
-                                           router_logits=router_logits)
+        final_hidden_states, topk_weights, topk_ids = self.experts(
+            hidden_states=hidden_states, router_logits=router_logits)
         final_hidden_states = final_hidden_states
         if self.tp_size > 1:
             final_hidden_states = self.experts.maybe_all_reduce_tensor_model_parallel(  # noqa E501
                 final_hidden_states)
 
-        return final_hidden_states.view(orig_shape)
+        return (
+            final_hidden_states.view(orig_shape), 
+            router_logits.detach(), 
+            topk_weights, 
+            topk_ids
+        )
 
 
 class Qwen3MoeAttention(nn.Module):
@@ -278,6 +283,7 @@ class Qwen3MoeDecoderLayer(nn.Module):
                                               quant_config=quant_config,
                                               prefix=f"{prefix}.mlp")
         else:
+            raise RuntimeError("Only MOE mode should be tested.")
             self.mlp = Qwen3MoeMLP(hidden_size=config.hidden_size,
                                    intermediate_size=config.intermediate_size,
                                    hidden_act=config.hidden_act,
@@ -309,8 +315,8 @@ class Qwen3MoeDecoderLayer(nn.Module):
         # Fully Connected
         hidden_states, residual = self.post_attention_layernorm(
             hidden_states, residual)
-        hidden_states = self.mlp(hidden_states)
-        return hidden_states, residual
+        hidden_states, router_logits, topk_weights, topk_ids = self.mlp(hidden_states)
+        return hidden_states, residual, router_logits, topk_weights, topk_ids
 
 
 @support_torch_compile
@@ -363,16 +369,23 @@ class Qwen3MoeModel(nn.Module):
             assert intermediate_tensors is not None
             hidden_states = intermediate_tensors["hidden_states"]
             residual = intermediate_tensors["residual"]
+        router_logits_list = []
+        topk_weights_list = []
+        topk_ids_list = []
         for i in range(self.start_layer, self.end_layer):
             layer = self.layers[i]
-            hidden_states, residual = layer(positions, hidden_states, residual)
+            hidden_states, residual, router_logits, topk_weights, topk_ids = layer(
+                positions, hidden_states, residual)
+            router_logits_list.append(router_logits)
+            topk_weights_list.append(topk_weights)
+            topk_ids_list.append(topk_ids)
         if not get_pp_group().is_last_rank:
             return IntermediateTensors({
                 "hidden_states": hidden_states,
                 "residual": residual
             })
         hidden_states, _ = self.norm(hidden_states, residual)
-        return hidden_states
+        return hidden_states, router_logits_list, topk_weights_list, topk_ids_list
 
     def load_weights(self, weights: Iterable[tuple[str,
                                                    torch.Tensor]]) -> set[str]:
@@ -515,9 +528,9 @@ class Qwen3MoeForCausalLM(nn.Module, SupportsPP):
         intermediate_tensors: Optional[IntermediateTensors] = None,
         inputs_embeds: Optional[torch.Tensor] = None,
     ) -> Union[torch.Tensor, IntermediateTensors]:
-        hidden_states = self.model(input_ids, positions, intermediate_tensors,
-                                   inputs_embeds)
-        return hidden_states
+        hidden_states, router_logits_list, topk_weights_list, topk_ids_list = \
+            self.model(input_ids, positions, intermediate_tensors, inputs_embeds)
+        return hidden_states, router_logits_list, topk_weights_list, topk_ids_list
 
     def compute_logits(
         self,

@@ -524,7 +524,7 @@ class UnquantizedFusedMoEMethod(FusedMoEMethodBase, CustomOp):
                 apply_router_weight_on_input=apply_router_weight_on_input,
                 global_num_experts=global_num_experts,
                 expert_map=expert_map,
-            )
+            ), topk_weights.detach(), topk_ids.detach()
 
     def forward_cpu(
         self,
@@ -1224,6 +1224,7 @@ class FusedMoE(torch.nn.Module):
             hidden_states = full_hidden_states[chunk_start:chunk_end, :]
             router_logits = full_router_logits[chunk_start:chunk_end, :]
 
+            raise NotImplementedError("Not implemented for topk_weights and topk_ids output")
             # Matrix multiply.
             final_hidden_states = self.quant_method.apply(
                 layer=self,
@@ -1276,7 +1277,7 @@ class FusedMoE(torch.nn.Module):
             hidden_states, router_logits = get_ep_group().dispatch(
                 hidden_states, router_logits)
         # Matrix multiply.
-        final_hidden_states = self.quant_method.apply(
+        final_hidden_states, topk_weights, topk_ids = self.quant_method.apply(
             layer=self,
             x=hidden_states,
             router_logits=router_logits,
@@ -1295,14 +1296,16 @@ class FusedMoE(torch.nn.Module):
         )
 
         if self.dp_size > 1:
+            raise NotImplementedError("Not implemented for topk_weights and topk_ids output")
             final_hidden_states = get_ep_group().combine(final_hidden_states)
 
         if self.reduce_results and (self.tp_size > 1 or self.ep_size > 1):
+            raise NotImplementedError("Not implemented for topk_weights and topk_ids output")
             # Default set to False. (May have to add shared expert outputs.)
             final_hidden_states = tensor_model_parallel_all_reduce(
                 final_hidden_states)
 
-        return final_hidden_states
+        return final_hidden_states, topk_weights, topk_ids
 
     @classmethod
     def make_expert_params_mapping(

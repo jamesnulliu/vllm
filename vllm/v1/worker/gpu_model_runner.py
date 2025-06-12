@@ -1200,6 +1200,18 @@ class GPUModelRunner(LoRAModelRunnerMixin):
                 inputs_embeds=inputs_embeds,
             )
 
+            if isinstance(model_output, tuple):
+                from vllm.router_log_helper import RouterLog
+                
+                model_output, router_logits_list, topk_weights_list, topk_ids_list = model_output
+                RouterLog.log(
+                    router_logits_list,
+                    topk_weights_list,
+                    topk_ids_list,
+                    self.model.__class__.__qualname__,
+                    "vllm.v1.worker.gpu_model_runner.GPUModelRunner.execute_model",
+                )
+
             self.maybe_wait_for_kv_save()
             finished_sending, finished_recving = (
                 self.get_finished_kv_transfers(scheduler_output))
@@ -1735,6 +1747,17 @@ class GPUModelRunner(LoRAModelRunnerMixin):
                     intermediate_tensors=intermediate_tensors,
                     inputs_embeds=inputs_embeds,
                 )
+                if isinstance(outputs, tuple):
+                    from vllm.router_log_helper import RouterLog
+                    outputs, router_logits_list, topk_weights_list, topk_ids_list = outputs
+                    RouterLog.log(
+                        router_logits_list,
+                        topk_weights_list,
+                        topk_ids_list,
+                        model.__class__.__qualname__,
+                        "vllm.v1.worker.gpu_model_runner.GPUModelRunner._dummy_run",
+                    )
+                
             if self.use_aux_hidden_state_outputs:
                 hidden_states, _ = outputs
             else:

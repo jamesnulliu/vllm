@@ -1840,7 +1840,7 @@ class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
         if not bypass_model_exec:
             with set_forward_context(model_input.attn_metadata,
                                      self.vllm_config, virtual_engine):
-                hidden_or_intermediate_states = model_executable(
+                out = model_executable(
                     input_ids=model_input.input_tokens,
                     inputs_embeds=model_input.inputs_embeds,
                     positions=model_input.input_positions,
@@ -1853,6 +1853,17 @@ class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
                     **seqlen_agnostic_kwargs,
                     **model_kwargs,
                 )
+
+                if isinstance(out, tuple):
+                    from vllm.router_log_helper import RouterLog
+                    hidden_or_intermediate_states, router_logits_list, topk_weights_list, topk_ids_list = out
+                    RouterLog.log(
+                        router_logits_list,
+                        topk_weights_list,
+                        topk_ids_list,
+                        model_executable.__class__.__qualname__,
+                        "vllm.worker.model_runner.ModelRunner.execute_model",
+                    )
 
         if (self.observability_config is not None
                 and self.observability_config.collect_model_forward_time):
