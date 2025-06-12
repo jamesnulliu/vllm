@@ -32,3 +32,23 @@ cd /path/to/vllm
 pip install regex setuptools-scm setuptools-rust flashinfer-python
 pip install --no-build-isolation -v -e .
 ```
+
+## 2. Usage
+
+To inference, modify `scripts/inference.sh` and `scripts/inference.py`, and run:
+
+```bash
+bash scripts/inference.sh
+```
+
+To donwload model/dataset, modify `scripts/download.sh`, and run:
+
+```bash
+python scripts/download.sh
+```
+
+To show result, modify `scripts/show.py`, and run:
+
+```bash
+python scripts/show.py
+```
