@@ -1,5 +1,5 @@
-unset http_proxy && unset https_proxy
-export HF_ENDPOINT="https://hf-mirror.com"
+# unset http_proxy && unset https_proxy
+# export HF_ENDPOINT="https://hf-mirror.com"
 
 while true; do
     # Auto resumed download

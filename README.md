@@ -17,7 +17,7 @@ docker run -td --gpus all --name <container-name> --network host \
     -e hf_token=<your-hf-token>  \
     -e HF_HOME=/nvme/model_hub \
     --shm-size 20G \
-    pjlab/deeplearning:v2.1.0-torch2.7.0-cuda12.6.0-ubuntu24.04
+    pjlab/deeplearning:v2.1.1-torch2.7.0-cuda12.6.0-ubuntu24.04
 ```
 
 ### 1.2. Python Packages
@@ -26,7 +26,7 @@ docker run -td --gpus all --name <container-name> --network host \
 
 ```bash
 conda install -y cmake=3.26
-
+curl --proto '=https' --tlsv1.2 https://sh.rustup.rs -sSf | sh
 git clone --depth 1 --branch v0.9.0.1.devel https://github.com/jamesnulliu/vllm /path/to/vllm
 cd /path/to/vllm
 pip install regex setuptools-scm setuptools-rust flashinfer-python
