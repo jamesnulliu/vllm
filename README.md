@@ -3,7 +3,7 @@
 
 ### 1.1. Docker
 
-Use `pjlab/deeplearning:v2.1.1-torch2.7.0-cuda12.6.0-ubuntu24.04`.
+Use `pjlab/deeplearning:v2.2.3-cuda12.8.0-torch2.7.0`.
 
 For example:
 
@@ -16,8 +16,8 @@ docker run -td --gpus all --name <container-name> --network host \
     -e https_proxy=<https-proxy>  \
     -e hf_token=<your-hf-token>  \
     -e HF_HOME=/nvme/model_hub \
-    --shm-size 20G \
-    pjlab/deeplearning:v2.1.1-torch2.7.0-cuda12.6.0-ubuntu24.04
+    --shm-size 10G \
+    pjlab/deeplearning:v2.2.3-cuda12.8.0-torch2.7.0
 ```
 
 ### 1.2. Python Packages
@@ -25,12 +25,15 @@ docker run -td --gpus all --name <container-name> --network host \
 **INSIDE THE CONTAINER**
 
 ```bash
-conda install -y cmake=3.26
-curl --proto '=https' --tlsv1.2 https://sh.rustup.rs -sSf | sh
 git clone --depth 1 --branch v0.9.0.1.devel https://github.com/jamesnulliu/vllm /path/to/vllm
+
 cd /path/to/vllm
-pip install regex setuptools-scm setuptools-rust flashinfer-python
-pip install --no-build-isolation -v -e .
+
+conda install -y cmake=3.26
+
+pip install regex setuptools-scm setuptools-rust flashinfer-python --no-build-isolation
+
+VLLM_USE_PRECOMPILED=1 pip install --no-build-isolation -v -e .
 ```
 
 ## 2. Usage
