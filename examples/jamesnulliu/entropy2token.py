@@ -12,16 +12,22 @@ prompts = [
 # Create a sampling params object.
 sampling_params = SamplingParams(temperature=0.8, top_p=0.95)
 
-@torch.compile
+
 def entropy_from_logits(logits: torch.Tensor):
     """Calculate entropy from logits."""
     pd = torch.nn.functional.softmax(logits, dim=-1)
     entropy = torch.logsumexp(logits, dim=-1) - torch.sum(pd * logits, dim=-1)
     return entropy
 
+
 def main():
     # Create an LLM.
-    llm = LLM(model="facebook/opt-125m")
+    llm = LLM(
+        model="facebook/opt-125m",
+        gpu_memory_utilization=0.8,
+        enforce_eager=True,
+        trust_remote_code=True,
+    )
     # Generate texts from the prompts.
     # The output is a list of RequestOutput objects
     # that contain the prompt, generated text, and other information.
@@ -29,13 +35,7 @@ def main():
     # Print the outputs.
     print("\nGenerated Outputs:\n" + "-" * 60)
     for output in outputs:
-        prompt = output.prompt
         generated_text = output.outputs[0].text
-        logprobs = output.outputs[0].logprobs
-        entropy = entropy_from_logits(logprobs)
-        assert logprobs.shape == generated_text.shape
-        assert entropy.shape == generated_text.shape
-        print(f"Prompt:    {prompt!r}")
         print(f"Output:    {generated_text!r}")
         print("-" * 60)
 
