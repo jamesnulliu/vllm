@@ -69,6 +69,8 @@ class SamplerOutput:
     # PLACEHOLDER_TOKEN_ID (-1 by default) is used for padding.
     sampled_token_ids: torch.Tensor
     logprobs_tensors: Optional[LogprobsTensors]
+    logits: Optional[torch.Tensor] = None
+    entropy: Optional[torch.Tensor] = None
 
 
 @dataclass
@@ -115,6 +117,9 @@ class ModelRunnerOutput:
 
     # req_id -> num_nans_in_logits
     num_nans_in_logits: Optional[dict[str, int]] = None
+
+    logits: Optional[torch.Tensor] = None
+    entropy: Optional[torch.Tensor] = None
 
 
 EMPTY_MODEL_RUNNER_OUTPUT = ModelRunnerOutput(req_ids=[],

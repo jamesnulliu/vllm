@@ -2,6 +2,7 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 """A layer that samples the next tokens from the model's outputs."""
 
+from typing import Optional
 import torch
 import torch.nn as nn
 
@@ -64,8 +65,13 @@ class Sampler(nn.Module):
             elif self.logprobs_mode == "processed_logits":
                 raw_logprobs = logits.clone()
 
+        # Calculate entropy
+        entropy = None
+        if sampling_metadata.keep_entropy:
+            entropy = self.entropy_from_logits(logits)
+
         # Sample the next token.
-        sampled = self.sample(logits, sampling_metadata)
+        sampled = self.sample(logits, sampling_metadata, entropy)
         # Convert sampled token ids to int64 (long) type to ensure compatibility
         # with subsequent operations that may use these values as indices.
         # This conversion is necessary because FlashInfer sampling operations
@@ -79,6 +85,9 @@ class Sampler(nn.Module):
 
         # Use int32 to reduce the tensor size.
         sampled = sampled.to(torch.int32)
+        
+        # If requested, keep the logits tensor.
+        logits = logits if sampling_metadata.keep_logits else None
 
         # These are GPU tensors.
         sampler_output = SamplerOutput(
@@ -87,6 +96,8 @@ class Sampler(nn.Module):
             # token per request.
             sampled_token_ids=sampled.unsqueeze(-1),
             logprobs_tensors=logprobs_tensors,
+            logits=logits,
+            entropy=entropy
         )
         return sampler_output
 
@@ -105,6 +116,7 @@ class Sampler(nn.Module):
         self,
         logits: torch.Tensor,
         sampling_metadata: SamplingMetadata,
+        entropy: Optional[torch.Tensor] = None
     ) -> torch.Tensor:
         """Sample logits based on sampling metadata.
 
@@ -122,6 +134,24 @@ class Sampler(nn.Module):
                 return greedy_sampled
 
         assert sampling_metadata.temperature is not None
+
+        if sampling_metadata.flexible_temperature["enabled"]:
+            method = sampling_metadata.flexible_temperature["method"]
+            if method == "entropy-80-20" and entropy is not None:
+                # tokens with top 20% entropy will be sampled with 1.0, and
+                # the rest will be sampled with 0.8.
+                top20 = torch.quantile(
+                    entropy, 0.8, dim=-1, keepdim=True)
+                sampling_metadata.temperature = torch.where(
+                    entropy > top20,
+                    torch.tensor(1.0, device=entropy.device),
+                    torch.tensor(0.8, device=entropy.device),
+                )
+            else:
+                raise ValueError(
+                    f"Unknown flexible temperature method: "
+                    f"{sampling_metadata.flexible_temperature['method']}"
+                )
 
         # Apply temperature.
         logits = self.apply_temperature(logits, sampling_metadata.temperature)
@@ -238,3 +268,12 @@ class Sampler(nn.Module):
                 sampling_metadata.output_token_ids,
             )
         return logits
+    
+    def entropy_from_logits(self, logits: torch.Tensor):
+        """
+        Calculate entropy from logits.
+        """
+        pd = torch.nn.functional.softmax(logits, dim=-1)
+        entropy = torch.logsumexp(logits, dim=-1) - torch.sum(
+            pd * logits, dim=-1)
+        return entropy

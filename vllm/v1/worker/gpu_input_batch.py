@@ -23,6 +23,7 @@ from vllm.v1.spec_decode.utils import is_spec_decode_unsupported
 from vllm.v1.utils import copy_slice
 from vllm.v1.worker.block_table import MultiGroupBlockTable
 
+from copy import deepcopy
 
 @dataclass
 class CachedRequestState:
@@ -235,6 +236,13 @@ class InputBatch:
 
         self.req_output_token_ids: list[Optional[list[int]]] = []
 
+        self.sampling_keep_logits = False
+        self.sampling_keep_entropy = False
+        self.sampling_flexible_temperature = {
+            "enabled": False,
+            "method": "entropy-80-20",
+        }
+
         # This is updated each time the batch constituents change.
         self.sampling_metadata = self._make_sampling_metadata()
 
@@ -330,6 +338,12 @@ class InputBatch:
                 req_index] = sampling_params.repetition_penalty
             if sampling_params.repetition_penalty != 1.0:
                 self.repetition_penalties_reqs.add(req_id)
+
+            self.sampling_keep_logits = sampling_params.keep_logits
+            self.sampling_keep_entropy = sampling_params.keep_entropy
+            self.sampling_flexible_temperature = deepcopy(
+                sampling_params.flexible_temperature
+            )
 
             # NOTE(woosuk): self.generators should not include the requests that
             # do not have their own generator.
@@ -661,6 +675,9 @@ class InputBatch:
             allowed_token_ids_mask=allowed_token_ids_mask,
             bad_words_token_ids=self.bad_words_token_ids,
             logitsprocs=self.logitsprocs,
+            keep_logits=self.sampling_keep_logits,
+            keep_entropy=self.sampling_keep_entropy,
+            flexible_temperature=deepcopy(self.sampling_flexible_temperature),
         )
 
     @property

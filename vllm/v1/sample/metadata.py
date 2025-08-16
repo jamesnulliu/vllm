@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 import torch
@@ -11,7 +11,6 @@ from vllm.v1.sample.logits_processor import LogitsProcessorManager
 
 @dataclass
 class SamplingMetadata:
-
     temperature: Optional[torch.Tensor]
     all_greedy: bool
     all_random: bool
@@ -41,3 +40,13 @@ class SamplingMetadata:
 
     # Loaded logits processors
     logitsprocs: LogitsProcessorManager
+
+    keep_logits: bool = False
+    keep_entropy: bool = False
+
+    flexible_temperature: dict = field(
+        default_factory=lambda: {
+            "enabled": False,
+            "method": "entropy-80-20",
+        }
+    )

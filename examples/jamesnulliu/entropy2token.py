@@ -10,15 +10,11 @@ prompts = [
     "The future of AI is",
 ]
 # Create a sampling params object.
-sampling_params = SamplingParams(temperature=0.8, top_p=0.95)
-
-
-def entropy_from_logits(logits: torch.Tensor):
-    """Calculate entropy from logits."""
-    pd = torch.nn.functional.softmax(logits, dim=-1)
-    entropy = torch.logsumexp(logits, dim=-1) - torch.sum(pd * logits, dim=-1)
-    return entropy
-
+sampling_params = SamplingParams(
+    temperature=0.8, 
+    top_p=0.95, 
+    keep_entropy=True
+)
 
 def main():
     # Create an LLM.
@@ -36,6 +32,7 @@ def main():
     print("\nGenerated Outputs:\n" + "-" * 60)
     for output in outputs:
         generated_text = output.outputs[0].text
+        print(f"Entropy shape: {output.entropy.shape}")
         print(f"Output:    {generated_text!r}")
         print("-" * 60)
 

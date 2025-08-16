@@ -227,6 +227,16 @@ class SamplingParams(
     bad_words: Optional[list[str]] = None
     _bad_words_token_ids: Optional[list[list[int]]] = None
 
+    keep_logits: bool = False
+    keep_entropy: bool = False
+
+    flexible_temperature: dict = msgspec.field(
+        default_factory=lambda: {
+            "enabled": False,
+            "method": "entropy-80-20",
+        }
+    )
+
     @staticmethod
     def from_optional(
         n: Optional[int] = 1,

@@ -1651,6 +1651,9 @@ class GPUModelRunner(LoRAModelRunnerMixin, KVConnectorModelRunnerMixin):
         logprobs_lists = logprobs_tensors.tolists() \
             if logprobs_tensors is not None else None
 
+        logits = sampler_output.logits
+        entropy = sampler_output.entropy
+
         # Compute prompt logprobs if needed.
         prompt_logprobs_dict = self._get_prompt_logprobs_dict(
             hidden_states[:num_scheduled_tokens],
@@ -1725,6 +1728,8 @@ class GPUModelRunner(LoRAModelRunnerMixin, KVConnectorModelRunnerMixin):
             pooler_output=[],
             kv_connector_output=kv_connector_output,
             num_nans_in_logits=num_nans_in_logits,
+            logits=logits,
+            entropy=entropy,
         )
 
     def propose_draft_token_ids(
