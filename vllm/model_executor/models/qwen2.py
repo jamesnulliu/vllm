@@ -332,6 +332,8 @@ class Qwen2Model(nn.Module):
 
         self.aux_hidden_state_layers: tuple[int] = tuple()
 
+        self.soft_thinking_printed = False
+
     def get_input_embeddings(self, input_ids: torch.Tensor) -> torch.Tensor:
         return self.embed_tokens(input_ids)
 
@@ -347,6 +349,9 @@ class Qwen2Model(nn.Module):
         if get_pp_group().is_first_rank:
             tp_size = get_tensor_model_parallel_world_size()
             if logprob_token_ids is not None and logprobs is not None:
+                if not self.soft_thinking_printed:
+                    print("[Qwen2Model]: ****** Soft thinking enabled ******")
+                    self.soft_thinking_printed = True
                 # (seq_len,)
                 prefill_mask = (logprobs.sum(dim=-1) == 0)
                 decoding_mask = ~prefill_mask
