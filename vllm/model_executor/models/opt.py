@@ -257,9 +257,48 @@ class OPTDecoder(nn.Module):
         positions: torch.Tensor,
         intermediate_tensors: Optional[IntermediateTensors],
         inputs_embeds: Optional[torch.Tensor] = None,
+        logprob_token_ids: Optional[torch.Tensor] = None,
+        logprobs: Optional[torch.Tensor] = None,
     ) -> Union[torch.Tensor, IntermediateTensors]:
         if get_pp_group().is_first_rank:
-            if inputs_embeds is None:
+            tp_size = get_tensor_model_parallel_world_size()
+            if logprob_token_ids is not None and logprobs is not None:
+                # (seq_len,)
+                prefill_mask = (logprobs.sum(dim=-1) == 0)
+                decoding_mask = ~prefill_mask
+
+                seq_len = input_ids.shape[0]
+                embed_dim = self.embed_tokens.weight.size(1)
+                dtype = self.embed_tokens.weight.dtype
+                device = input_ids.device
+
+                inputs_embeds = torch.empty(
+                    [seq_len, embed_dim], dtype=dtype, device=device)
+
+                # --- 1. Process Prefilling Tokens ---
+                if torch.any(prefill_mask):
+                    prefill_input_ids = input_ids[prefill_mask]
+                    prefill_embeds = self.get_input_embeddings(
+                        prefill_input_ids
+                    )
+                    inputs_embeds[prefill_mask] = prefill_embeds
+
+                # --- 2. Process Decoding Tokens ---
+                if torch.any(decoding_mask):
+                    decoding_logprobs = logprobs[decoding_mask]
+                    decoding_logprob_token_ids = logprob_token_ids[
+                        decoding_mask
+                    ]
+                    if tp_size > 1:
+                        decoding_embeds = self.embed_tokens.weighted_forward_tp(
+                            decoding_logprobs, decoding_logprob_token_ids
+                        )
+                    else:
+                        decoding_embeds = self.embed_tokens.weighted_forward(
+                            decoding_logprobs, decoding_logprob_token_ids
+                        )
+                    inputs_embeds[decoding_mask] = decoding_embeds
+            elif inputs_embeds is None:
                 inputs_embeds = self.get_input_embeddings(input_ids)
             pos_embeds = self.embed_positions(positions)
             if self.project_in is not None:
@@ -308,11 +347,15 @@ class OPTModel(nn.Module):
         positions: torch.Tensor,
         intermediate_tensors: Optional[IntermediateTensors],
         inputs_embeds: Optional[torch.Tensor] = None,
+        logprob_token_ids: Optional[torch.Tensor] = None,
+        logprobs: Optional[torch.Tensor] = None,
     ) -> Union[torch.Tensor, IntermediateTensors]:
         return self.decoder(input_ids,
                             positions,
                             intermediate_tensors,
-                            inputs_embeds=inputs_embeds)
+                            inputs_embeds=inputs_embeds,
+                            logprob_token_ids=logprob_token_ids,
+                            logprobs=logprobs)
 
     def load_weights(self, weights: Iterable[tuple[str,
                                                    torch.Tensor]]) -> set[str]:
@@ -388,9 +431,11 @@ class OPTForCausalLM(nn.Module, SupportsPP):
         positions: torch.Tensor,
         intermediate_tensors: Optional[IntermediateTensors] = None,
         inputs_embeds: Optional[torch.Tensor] = None,
+        logprob_token_ids: Optional[torch.Tensor] = None,
+        logprobs: Optional[torch.Tensor] = None,
     ) -> Union[torch.Tensor, IntermediateTensors]:
         hidden_states = self.model(input_ids, positions, intermediate_tensors,
-                                   inputs_embeds)
+                                   inputs_embeds, logprob_token_ids, logprobs)
         return hidden_states
 
     def compute_logits(

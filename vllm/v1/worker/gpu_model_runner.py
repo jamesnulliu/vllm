@@ -142,6 +142,7 @@ class GPUModelRunner(LoRAModelRunnerMixin, KVConnectorModelRunnerMixin):
         self.max_model_len = model_config.max_model_len
         self.max_num_tokens = scheduler_config.max_num_batched_tokens
         self.max_num_reqs = scheduler_config.max_num_seqs
+        self.max_logprobs = model_config.max_logprobs
 
         # Model-related.
         self.num_query_heads = model_config.get_num_attention_heads(
@@ -240,6 +241,16 @@ class GPUModelRunner(LoRAModelRunnerMixin, KVConnectorModelRunnerMixin):
         self.positions = torch.zeros(self.max_num_tokens,
                                      dtype=torch.int64,
                                      device=self.device)
+        self.logprob_token_ids = torch.zeros(
+            (self.max_num_tokens, self.max_logprobs + 1),
+            dtype=torch.int32,
+            device=self.device
+        )
+        self.logprobs = torch.zeros(
+            (self.max_num_tokens, self.max_logprobs + 1),
+            dtype=torch.float32,
+            device=self.device
+        )
         self.query_start_loc = torch.zeros(self.max_num_reqs + 1,
                                            dtype=torch.int32,
                                            device=self.device)
@@ -300,6 +311,18 @@ class GPUModelRunner(LoRAModelRunnerMixin, KVConnectorModelRunnerMixin):
                                          dtype=torch.int64,
                                          device="cpu",
                                          pin_memory=self.pin_memory)
+        self.logprob_token_ids_cpu = torch.zeros(
+            (self.max_num_tokens, self.max_logprobs + 1),
+            dtype=torch.int32,
+            device="cpu",
+            pin_memory=self.pin_memory
+        )
+        self.logprobs_cpu = torch.zeros(
+            (self.max_num_tokens, self.max_logprobs + 1),
+            dtype=torch.float32,
+            device="cpu",
+            pin_memory=self.pin_memory
+        )
         self.positions_np = self.positions_cpu.numpy()
         self.query_start_loc_cpu = torch.zeros(self.max_num_reqs + 1,
                                                dtype=torch.int32,
@@ -742,6 +765,11 @@ class GPUModelRunner(LoRAModelRunnerMixin, KVConnectorModelRunnerMixin):
                            torch.from_numpy(token_indices),
                            out=self.input_ids_cpu[:total_num_scheduled_tokens])
 
+        # Update token_indices because logprob is of size: 
+        # (max_num_reqs, max_model_len, nprobs_per_token)
+        nprobs_per_token = self.max_logprobs + 1
+        # logprob_indices = (start_indices[:, np.newaxis] + offsets).flatten()
+        total_logprob_elements = total_num_scheduled_tokens * nprobs_per_token
         self.input_batch.block_table.compute_slot_mapping(
             req_indices, positions_np)
         self.input_batch.block_table.commit_slot_mapping(
@@ -758,6 +786,14 @@ class GPUModelRunner(LoRAModelRunnerMixin, KVConnectorModelRunnerMixin):
         # Copy the tensors to the GPU.
         self.input_ids[:total_num_scheduled_tokens].copy_(
             self.input_ids_cpu[:total_num_scheduled_tokens], non_blocking=True)
+        # [DEBUG|@jamesnulliu]
+        #   Check if logprobs are correctly copied
+        self.logprob_token_ids.flatten()[:total_logprob_elements].copy_(
+            self.logprob_token_ids_cpu.flatten()[:total_logprob_elements],
+            non_blocking=True)
+        self.logprobs.flatten()[:total_logprob_elements].copy_(
+            self.logprobs_cpu.flatten()[:total_logprob_elements], 
+            non_blocking=True)
         if self.uses_mrope:
             # Only relevant for models using M-RoPE (e.g, Qwen2-VL)
             self.mrope_positions[:, :total_num_scheduled_tokens].copy_(
@@ -1589,6 +1625,13 @@ class GPUModelRunner(LoRAModelRunnerMixin, KVConnectorModelRunnerMixin):
                                            uniform_decode=uniform_decode)
         cudagraph_runtime_mode, batch_descriptor = \
             self.cudagraph_dispatcher.dispatch(batch_descriptor)
+        
+        # [TODO|@jamesnulliu]
+        # This is crap, modify this.
+        logprob_token_ids = None if torch.all(self.logprob_token_ids == 0) \
+            else self.logprob_token_ids[:num_input_tokens, 1:].to(torch.int64)
+        logprobs = None if torch.all(self.logprobs == 0.0) else \
+            self.logprobs[:num_input_tokens, 1:]
 
         # Run the model.
         # Use persistent buffers for CUDA graphs.
@@ -1606,6 +1649,8 @@ class GPUModelRunner(LoRAModelRunnerMixin, KVConnectorModelRunnerMixin):
                 positions=positions,
                 intermediate_tensors=intermediate_tensors,
                 inputs_embeds=inputs_embeds,
+                logprob_token_ids=logprob_token_ids,
+                logprobs=logprobs,
                 **model_kwargs,
             )
 
@@ -1706,9 +1751,25 @@ class GPUModelRunner(LoRAModelRunnerMixin, KVConnectorModelRunnerMixin):
                 # so that we could clear the sampled tokens before returning.
                 discard_sampled_tokens_req_indices.append(i)
 
+        from vllm.v1.outputs import LogprobsTensors
+        logprobs_tensors: LogprobsTensors = sampler_output.logprobs_tensors
+
+        n_logprobs = logprobs_tensors.logprobs.flatten().numel()
+
+        self.logprob_token_ids_cpu.flatten()[:n_logprobs].copy_(
+            logprobs_tensors.logprob_token_ids.flatten(),
+            non_blocking=True
+        )
+
+        self.logprobs_cpu.flatten()[:n_logprobs].copy_(
+            logprobs_tensors.logprobs.flatten(),
+            non_blocking=True
+        )
+
+        self.n_logprobs_token = logprobs_tensors.logprobs.shape[0]
+
         # NOTE: GPU -> CPU Sync happens here.
         # Move as many CPU operations as possible before this sync point.
-        logprobs_tensors = sampler_output.logprobs_tensors
         logprobs_lists = logprobs_tensors.tolists() \
             if logprobs_tensors is not None else None
 

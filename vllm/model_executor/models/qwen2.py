@@ -341,12 +341,51 @@ class Qwen2Model(nn.Module):
         positions: torch.Tensor,
         intermediate_tensors: Optional[IntermediateTensors] = None,
         inputs_embeds: Optional[torch.Tensor] = None,
+        logprob_token_ids: Optional[torch.Tensor] = None,
+        logprobs: Optional[torch.Tensor] = None,
     ) -> Union[torch.Tensor, IntermediateTensors]:
         if get_pp_group().is_first_rank:
-            if inputs_embeds is not None:
-                hidden_states = inputs_embeds
-            else:
+            tp_size = get_tensor_model_parallel_world_size()
+            if logprob_token_ids is not None and logprobs is not None:
+                # (seq_len,)
+                prefill_mask = (logprobs.sum(dim=-1) == 0)
+                decoding_mask = ~prefill_mask
+
+                seq_len = input_ids.shape[0]
+                embed_dim = self.embed_tokens.weight.size(1)
+                dtype = self.embed_tokens.weight.dtype
+                device = input_ids.device
+
+                inputs_embeds = torch.empty(
+                    [seq_len, embed_dim], dtype=dtype, device=device)
+
+                # --- 1. Process Prefilling Tokens ---
+                if torch.any(prefill_mask):
+                    prefill_input_ids = input_ids[prefill_mask]
+                    prefill_embeds = self.get_input_embeddings(
+                        prefill_input_ids
+                    )
+                    inputs_embeds[prefill_mask] = prefill_embeds
+
+                # --- 2. Process Decoding Tokens ---
+                if torch.any(decoding_mask):
+                    decoding_logprobs = logprobs[decoding_mask]
+                    decoding_logprob_token_ids = logprob_token_ids[
+                        decoding_mask
+                    ]
+                    if tp_size > 1:
+                        decoding_embeds = self.embed_tokens.weighted_forward_tp(
+                            decoding_logprobs, decoding_logprob_token_ids
+                        )
+                    else:
+                        decoding_embeds = self.embed_tokens.weighted_forward(
+                            decoding_logprobs, decoding_logprob_token_ids
+                        )
+                    inputs_embeds[decoding_mask] = decoding_embeds
+            elif inputs_embeds is None:
                 hidden_states = self.get_input_embeddings(input_ids)
+            else:
+                hidden_states = inputs_embeds
             residual = None
         else:
             assert intermediate_tensors is not None
@@ -491,9 +530,11 @@ class Qwen2ForCausalLM(nn.Module, SupportsLoRA, SupportsPP):
         positions: torch.Tensor,
         intermediate_tensors: Optional[IntermediateTensors] = None,
         inputs_embeds: Optional[torch.Tensor] = None,
+        logprob_token_ids: Optional[torch.Tensor] = None,
+        logprobs: Optional[torch.Tensor] = None,
     ) -> Union[torch.Tensor, IntermediateTensors]:
         hidden_states = self.model(input_ids, positions, intermediate_tensors,
-                                   inputs_embeds)
+                                   inputs_embeds, logprob_token_ids, logprobs)
         return hidden_states
 
     def compute_logits(

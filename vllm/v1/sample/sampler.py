@@ -63,6 +63,12 @@ class Sampler(nn.Module):
                 raw_logprobs = self.compute_logprobs(logits)
             elif self.logprobs_mode == "processed_logits":
                 raw_logprobs = logits.clone()
+            elif self.logprobs_mode == "soft_thinking":
+                raw_logprobs = logits.softmax(dim=-1, dtype=torch.float32)
+            elif self.logprobs_mode == "soft_thinking_with_temperature":
+                raw_logprobs = logits.softmax(dim=-1, dtype=torch.float32)
+                raw_logprobs = self.apply_temperature(
+                    raw_logprobs, sampling_metadata.temperature)
 
         # Sample the next token.
         sampled = self.sample(logits, sampling_metadata)
